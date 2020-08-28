@@ -312,7 +312,227 @@ CmDz2DecompositionCplx::~CmDz2DecompositionCplx(void) {
   
   
   
+//------------------------------------------------------------------------------
+//------------------------------------------------------------------------------
+//------------------------------------------------------------------------------
+bool CmDz2DecompositionReal::Construct(SpaceStepper* sstepper,
+                                       const dvec& zboundarytype,
+                                       const dvec& stepcoefficient,
+                                       const int dimension,
+                                       const bool includedxy2) {
+  PS_DEBUG_TRACE_ENTER("CmDz2DecompositionReal::Construct(SpaceStepper,dmat,dmat)")
+  
+  
+  dimension_ = dimension;
+  includedxy2_ = includedxy2;
+  
+  
+  const int sizez = sstepper->GetDcp().GetSize(2);
+  dmat cmdz1 = arma::real(sstepper->GetCmDz1());
+  dmat cmdz2 = arma::real(sstepper->GetCmDz2());
+  
+  
+  // Create the original coefficient matrix with boundary conditions.
+  // For inside region:
+  //                      partial2(f)
+  //                      ----------- + b*f = c
+  //                      partial2(z)
+  //
+  // For boundaries:
+  //                      partial(f) |
+  //              a*f + b*---------- |         = c|_{z=+-1}
+  //                      partial(z) |_{z=+-1}
+  //
+  cmdz2.row(0      ) = zboundarytype(1)*cmdz1.row(0      );
+  cmdz2.row(sizez-1) = zboundarytype(3)*cmdz1.row(sizez-1);
+  cmdz2(0      ,0      ) += zboundarytype(0);
+  cmdz2(sizez-1,sizez-1) += zboundarytype(2);
+  
+  
+  
+  const double a11 = cmdz2.at(0      ,0      );
+  const double ann = cmdz2.at(sizez-1,sizez-1);
+  const double a1n = cmdz2.at(0      ,sizez-1);
+  const double an1 = cmdz2.at(sizez-1,0      );
+  const double den = 1.0/(an1*a1n-a11*ann);
+  
+  
+  
+  // Generate fixing coefficients for forward and backward steps.
+  dmat fixforwardbottom (1,sizez,arma::fill::zeros);
+  dmat fixforwardtop    (1,sizez,arma::fill::zeros);
+  dmat fixbackwardbottom(1,sizez,arma::fill::zeros);
+  dmat fixbackwardtop   (1,sizez,arma::fill::zeros);
+  
+  
+  for (int ix = 1; ix < sizez-1; ++ix) {
+    
+    fixbackwardbottom(ix) = (ann*cmdz2.at(0,ix)-a1n*cmdz2.at(sizez-1,ix))*den;
+    fixbackwardtop   (ix) = (a11*cmdz2.at(sizez-1,ix)-an1*cmdz2.at(0,ix))*den;
+    fixforwardbottom (ix) = (ann*cmdz2.at(ix,0)-an1*cmdz2.at(ix,sizez-1))*den;
+    fixforwardtop    (ix) = (a11*cmdz2.at(ix,sizez-1)-a1n*cmdz2.at(ix,0))*den;
+    
+  }
+  fixbackwardbottom(0      ) = -1*ann*den;
+  fixbackwardbottom(sizez-1) = +1*a1n*den;
+  fixbackwardtop   (0      ) = +1*an1*den;
+  fixbackwardtop   (sizez-1) = -1*a11*den;
+  
+  
+  
+  // Generate the forward coefficient matrix.
+  dmat cmdz2forward(sizez-2,sizez-2,arma::fill::zeros);
+  for (int iz = 1; iz < sizez-1; ++iz) {
+    for (int ix = 1; ix < sizez-1; ++ix) {
+      cmdz2forward(ix-1,iz-1) =
+        cmdz2.at(ix,iz) +
+        cmdz2.at(ix,0      )*fixbackwardbottom(iz) +
+        cmdz2.at(ix,sizez-1)*fixbackwardtop(iz);
+    }
+  }
+  
+  
+  // Get the eigen-decomposition information.
+  arma::cx_vec eigenvalue;
+  arma::cx_mat eigenvector;
+  eig_gen(eigenvalue,eigenvector,cmdz2forward);
+  eigenvalue.set_imag(zeros(size(eigenvalue)));
+  
+  // Get real eigen-vector matrix.
+  dmat eigenvectornorm(sizez,sizez,arma::fill::zeros);
+  eigenvectornorm.submat(1,1,sizez-2,sizez-2) = arma::real(eigenvector);
+  eigenvectornorm(0      ,0      ) = 1.0;
+  eigenvectornorm(sizez-1,sizez-1) = 1.0;
+  
+  // Get real eigen-vector inverse matrix.
+  dmat eigenvectorinverse(sizez,sizez,arma::fill::zeros);
+  eigenvectorinverse.submat(1,1,sizez-2,sizez-2) = arma::inv(arma::real(eigenvector));
+  eigenvectorinverse(0      ,0      ) = 1.0;
+  eigenvectorinverse(sizez-1,sizez-1) = 1.0;
+  
+  
+  
 
+  //
+  zboundarytype_ = zboundarytype;
+  stepcoefficient_ = stepcoefficient;
+  coefficientmatrix_ = cmdz2;
+  
+  coefficientmatrixdz1_ = cmdz1;
+  
+  
+  fixforwardtop_ = fixforwardtop;
+  fixforwardbottom_ = fixforwardbottom;
+  fixbackwardtop_ = fixbackwardtop;
+  fixbackwardbottom_ = fixbackwardbottom;
+  
+  eigenvectornorm_ = eigenvectornorm;
+  eigenvectorinverse_ = eigenvectorinverse;
+
+  
+  eigenvalue_.set_size(sizez,1);
+  eigenvalue_.rows(1,sizez-2) = arma::real(eigenvalue);
+  
+  
+  
+  dmat cmdx2 = arma::real(sstepper->GetCmDx2().GetCMatCplx());
+  dmat cmdy2 = arma::real(sstepper->GetCmDy2().GetCMatCplx());
+  
+  dcube cmdx2cube = arma::real(sstepper->GetCmDx2().GetCubeCplxJoin());
+  dcube cmdy2cube = arma::real(sstepper->GetCmDy2().GetCubeCplxJoin());
+  
+  
+  
+//  rdcube* jm3k6 = NULL;
+  jm3k6 = new rdcube(sstepper->GetMpi(),sstepper->GetDcp(),dimension_);
+  rccube tmp(sstepper->GetMpi(),sstepper->GetDcp(),dimension_);
+  for (int id = 0; id < dimension_; ++id) {
+    tmp.GetCubeReal(id) = sstepper->GetDomain()->GetJm3K(6).GetCubeReal();
+  }
+  jm3k6->RealPencilX2Z(tmp);
+
+
+  jm3k45 = new rdcube(sstepper->GetMpi(),sstepper->GetDcp(),dimension_);
+  for (int id = 0; id < dimension_; ++id) {
+    tmp.GetCubeReal(id) =
+      sstepper->GetDomain()->GetJm3K(4).GetCubeReal()+
+      sstepper->GetDomain()->GetJm3K(5).GetCubeReal();
+  }
+  jm3k45->RealPencilX2Z(tmp);
+
+
+
+
+
+  const int stepnum = std::max(1,(int)stepcoefficient.n_elem);
+  for (int idstep = 0; idstep < stepnum; ++idstep) {
+
+    double stepvalue = 0;
+    if (!stepcoefficient.is_empty()) {
+      stepvalue = stepcoefficient(idstep);
+    }
+
+
+    rdcube* reciprocal = new rdcube(sstepper->GetMpi(),sstepper->GetDcp(),dimension_);
+
+
+
+
+    for (int id = 1; id < sizez-1; ++id) {
+
+      reciprocal->GetCubeRealZ().slice(id) =
+//      1/(eigenvalue(id-1).real()+stepvalue/jm3k6->GetCubeRealZ().slice(id));
+      reciprocal->GetCubeRealZ().slice(id).fill(1/(eigenvalue(id-1).real()+stepvalue));
+
+    }
+
+
+    reciprocal->GetCubeRealZ().slice(0      ).fill(0);
+    reciprocal->GetCubeRealZ().slice(sizez-1).fill(0);
+
+
+
+    for (int iddim = 0; iddim < dimension_-1; ++iddim) {
+      reciprocal->GetCubeRealZ(iddim+1) = reciprocal->GetCubeRealZ(0);
+    }
+
+
+
+    eigenvaluereciprocal_.push_back(reciprocal);
+
+
+  }
+  
+  
+  
+  
+  PS_DEBUG_TRACE_LEAVE("CmDz2DecompositionReal::Construct(SpaceStepper,dmat,dmat)")
+  return true;
+}
+  
+  
+  
+//------------------------------------------------------------------------------
+//------------------------------------------------------------------------------
+//------------------------------------------------------------------------------
+CmDz2DecompositionReal::~CmDz2DecompositionReal(void) {
+  for (auto it=eigenvaluereciprocal_.begin(); it!=eigenvaluereciprocal_.end(); ++it) {
+    delete *it; *it = NULL;
+  }
+  if (jm3k6 != NULL) {
+    delete jm3k6;
+    jm3k6 = NULL;
+  }
+  if (jm3k45 != NULL) {
+    delete jm3k45;
+    jm3k45 = NULL;
+  }
+}
+  
+  
+  
+  
+  
   
   
 } // end namespace levelone
