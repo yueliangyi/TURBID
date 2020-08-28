@@ -1,5 +1,5 @@
 # TURBID
-A turbulence-resolving (direct) numerical simulation model for simulating bottom boundary layer and fine sediment transport
+A turbulence-resolving numerical model for simulating bottom boundary layer and fine sediment transport
 
 
 
