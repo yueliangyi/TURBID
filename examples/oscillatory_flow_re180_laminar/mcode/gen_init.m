@@ -1,5 +1,7 @@
+
 clc; clear; close all
-%%
+
+%% load the configuration file and compute the basics
 cfg_file.w_path = '../result';    % working path
 cfg_file.g_num  = [3 3 129];      % grid number
 cfg_file.re     = 180;            % Reynolds number (u_tau*H/2/nu)
