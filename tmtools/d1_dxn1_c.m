@@ -1,11 +1,18 @@
 function [ D1VarDxn1 ] = d1_dxn1_c( cmat1, var, n )
-%UNTITLED Summary of this function goes here
-%   Detailed explanation goes here
-
-% the input data is in 3D cplx space!
+%D1_DXN1_C Compute the 1st-order derivative of variable
+%   The 1st-order derivative of variable is computed using the correponding
+%   coefficient matrices
+%
+% 	cmat1   - 1st coefficient matrices
+%   var     - 3D variable in complex
+%   n       - index of direction
+%             1: streamwise
+%             2: spanwise
+%             3: vertical
+%
+%==========================================================================
 
 vsize  = size(var);
-
 if numel(size(var)) == 2
   vsize(3) = 1;
 end
