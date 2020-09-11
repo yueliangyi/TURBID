@@ -56,8 +56,8 @@ fclose(fileID);
 
 %%
 
-du1dx3 = d1_dxn1_c(cmat1,p00var{1,1},1);
-du2dx3 = d1_dxn1_c(cmat1,p00var{1,2},1);
+du1dx3 = d1_dxn1_c(cmat1,p00var{1,1},3);
+du2dx3 = d1_dxn1_c(cmat1,p00var{1,2},3);
 
 tau_b = sqrt(du1dx3(:,:,1).^2+du2dx3(:,:,1).^2);
 
